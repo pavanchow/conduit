@@ -24,6 +24,7 @@
 //! ```
 
 pub mod auth;
+pub mod base64;
 pub mod config;
 pub mod connection;
 pub mod error;
@@ -31,6 +32,8 @@ pub mod md5;
 pub mod message;
 pub mod mock;
 pub mod row;
+pub mod scram;
+pub mod sha256;
 pub mod types;
 
 pub use config::Config;
