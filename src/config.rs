@@ -1,6 +1,8 @@
 //! Connection configuration and a small parser for `postgres://` URLs.
 
 use crate::error::{Error, Result};
+use crate::message::MAX_MESSAGE_LEN;
+use std::time::Duration;
 
 /// Everything needed to open a connection.
 #[derive(Debug, Clone)]
@@ -10,6 +12,15 @@ pub struct Config {
     pub user: String,
     pub password: Option<String>,
     pub database: String,
+    /// Ceiling on a server-declared message length. A larger declared frame is
+    /// rejected as a protocol error before its body is buffered, bounding memory.
+    pub max_message_len: usize,
+    /// Maximum time to wait for the TCP connect to complete. `None` uses the OS
+    /// default, which can block for a long time against a silent host.
+    pub connect_timeout: Option<Duration>,
+    /// Maximum time to wait for a single socket read. `None` blocks indefinitely,
+    /// so a stalled server can pin the client; a value bounds that wait.
+    pub read_timeout: Option<Duration>,
 }
 
 impl Config {
@@ -21,6 +32,9 @@ impl Config {
             user: "postgres".into(),
             password: None,
             database: "postgres".into(),
+            max_message_len: MAX_MESSAGE_LEN,
+            connect_timeout: Some(Duration::from_secs(10)),
+            read_timeout: Some(Duration::from_secs(30)),
         }
     }
 
@@ -46,6 +60,24 @@ impl Config {
 
     pub fn database(mut self, database: impl Into<String>) -> Self {
         self.database = database.into();
+        self
+    }
+
+    /// Override the maximum server-declared message length (default 64 MiB).
+    pub fn max_message_len(mut self, bytes: usize) -> Self {
+        self.max_message_len = bytes;
+        self
+    }
+
+    /// Set the TCP connect timeout. `None` uses the OS default.
+    pub fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
+
+    /// Set the per-read socket timeout. `None` blocks indefinitely.
+    pub fn read_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.read_timeout = timeout;
         self
     }
 

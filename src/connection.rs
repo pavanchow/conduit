@@ -9,9 +9,10 @@ use crate::message::{
     FrontendMessage,
 };
 use crate::row::Row;
+use crate::scram::{ScramClient, MECHANISM};
 use crate::types::ToSql;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 
 /// An open connection to a Postgres server.
@@ -23,23 +24,52 @@ pub struct Connection {
     parameters: Vec<(String, String)>,
     backend_pid: i32,
     backend_secret: i32,
+    // Ceiling on a server-declared message length, from the Config.
+    max_message_len: usize,
 }
 
 impl Connection {
     /// Connect, run the startup handshake (including auth), and drain server
     /// parameters until the server reports it is ready for queries.
     pub fn connect(config: &Config) -> Result<Connection> {
-        let stream = TcpStream::connect((config.host.as_str(), config.port))?;
+        let stream = Connection::open_stream(config)?;
         stream.set_nodelay(true).ok();
+        stream.set_read_timeout(config.read_timeout)?;
         let mut conn = Connection {
             stream,
             read_buf: Vec::new(),
             parameters: Vec::new(),
             backend_pid: 0,
             backend_secret: 0,
+            max_message_len: config.max_message_len,
         };
         conn.handshake(config)?;
         Ok(conn)
+    }
+
+    /// Open the TCP stream, honouring the configured connect timeout. With a
+    /// timeout set, each resolved address is tried with `connect_timeout` so a
+    /// silent host cannot block the caller indefinitely.
+    fn open_stream(config: &Config) -> Result<TcpStream> {
+        match config.connect_timeout {
+            None => Ok(TcpStream::connect((config.host.as_str(), config.port))?),
+            Some(timeout) => {
+                let addrs = (config.host.as_str(), config.port).to_socket_addrs()?;
+                let mut last_err = None;
+                for addr in addrs {
+                    match TcpStream::connect_timeout(&addr, timeout) {
+                        Ok(stream) => return Ok(stream),
+                        Err(e) => last_err = Some(e),
+                    }
+                }
+                Err(Error::Io(last_err.unwrap_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "no addresses resolved for host",
+                    )
+                })))
+            }
+        }
     }
 
     fn handshake(&mut self, config: &Config) -> Result<()> {
@@ -49,25 +79,55 @@ impl Connection {
             params: Vec::new(),
         })?;
 
+        // SCRAM is a multi-round exchange, so its client state lives across loop
+        // iterations.
+        let mut scram: Option<ScramClient> = None;
+
         loop {
             match self.read_message()? {
                 BackendMessage::Authentication(AuthRequest::Ok) => {}
                 BackendMessage::Authentication(AuthRequest::CleartextPassword) => {
-                    let pw = config.password.as_deref().ok_or_else(|| {
-                        Error::Auth("server requested a password but none was configured".into())
-                    })?;
-                    self.send(&FrontendMessage::Password(pw.to_string()))?;
+                    let pw = self.require_password(config)?;
+                    self.send(&FrontendMessage::Password(pw))?;
                 }
                 BackendMessage::Authentication(AuthRequest::Md5Password { salt }) => {
-                    let pw = config.password.as_deref().ok_or_else(|| {
-                        Error::Auth("server requested a password but none was configured".into())
-                    })?;
-                    let hashed = md5_password(&config.user, pw, &salt);
+                    let pw = self.require_password(config)?;
+                    let hashed = md5_password(&config.user, &pw, &salt);
                     self.send(&FrontendMessage::Password(hashed))?;
+                }
+                BackendMessage::Authentication(AuthRequest::Sasl { mechanisms }) => {
+                    if !mechanisms.iter().any(|m| m == MECHANISM) {
+                        return Err(Error::Auth(format!(
+                            "server offered SASL mechanisms {mechanisms:?}; Conduit implements {MECHANISM}"
+                        )));
+                    }
+                    let pw = self.require_password(config)?;
+                    let mut client = ScramClient::new(&pw);
+                    let client_first = client.client_first();
+                    self.send(&FrontendMessage::SaslInitialResponse {
+                        mechanism: MECHANISM.to_string(),
+                        data: client_first.into_bytes(),
+                    })?;
+                    scram = Some(client);
+                }
+                BackendMessage::Authentication(AuthRequest::SaslContinue { data }) => {
+                    let client = scram.as_mut().ok_or_else(|| {
+                        Error::Auth("server sent SASLContinue before SASL was started".into())
+                    })?;
+                    let client_final = client.client_final(&data)?;
+                    self.send(&FrontendMessage::SaslResponse {
+                        data: client_final.into_bytes(),
+                    })?;
+                }
+                BackendMessage::Authentication(AuthRequest::SaslFinal { data }) => {
+                    let client = scram.as_ref().ok_or_else(|| {
+                        Error::Auth("server sent SASLFinal before SASL was started".into())
+                    })?;
+                    client.verify_server_final(&data)?;
                 }
                 BackendMessage::Authentication(AuthRequest::Unsupported(code)) => {
                     return Err(Error::Auth(format!(
-                        "unsupported authentication method (code {code}); Conduit implements cleartext and MD5 only"
+                        "unsupported authentication method (code {code}); Conduit implements cleartext, MD5, and SCRAM-SHA-256"
                     )));
                 }
                 BackendMessage::ParameterStatus { name, value } => {
@@ -77,7 +137,9 @@ impl Connection {
                     self.backend_pid = pid;
                     self.backend_secret = secret;
                 }
-                BackendMessage::NoticeResponse(_) => {}
+                BackendMessage::NoticeResponse(_)
+                | BackendMessage::NotificationResponse { .. }
+                | BackendMessage::Unknown { .. } => {}
                 BackendMessage::ReadyForQuery { .. } => return Ok(()),
                 BackendMessage::ErrorResponse(fields) => return Err(db_error(&fields)),
                 other => {
@@ -89,10 +151,35 @@ impl Connection {
         }
     }
 
-    /// Run `sql` with the simple Query protocol and collect the result rows.
+    fn require_password(&self, config: &Config) -> Result<String> {
+        config
+            .password
+            .as_deref()
+            .map(|p| p.to_string())
+            .ok_or_else(|| {
+                Error::Auth("server requested a password but none was configured".into())
+            })
+    }
+
+    /// Run a single-statement simple query and collect its result rows.
+    ///
+    /// The simple protocol allows several statements separated by `;` in one
+    /// message, and Postgres then returns one result set per statement. This
+    /// method flattens whatever comes back into a single `Vec<Row>`, which is
+    /// correct for a single statement but would merge the sets of a
+    /// multi-statement query. Use [`Connection::simple_query_multi`] to keep the
+    /// per-statement sets separate.
     pub fn simple_query(&mut self, sql: &str) -> Result<Vec<Row>> {
+        Ok(self.simple_query_multi(sql)?.into_iter().flatten().collect())
+    }
+
+    /// Run a simple query that may contain several `;`-separated statements and
+    /// return one result set per statement, in order. Each `CommandComplete`
+    /// closes a set, so `SELECT 1; SELECT 2` yields two distinct sets rather than
+    /// one merged list.
+    pub fn simple_query_multi(&mut self, sql: &str) -> Result<Vec<Vec<Row>>> {
         self.send(&FrontendMessage::Query(sql.to_string()))?;
-        self.collect_results()
+        self.collect_result_sets()
     }
 
     /// Run `sql` with the extended protocol, binding `params` as text-format
@@ -119,14 +206,21 @@ impl Connection {
             max_rows: 0,
         })?;
         self.send(&FrontendMessage::Sync)?;
-        self.collect_results()
+        Ok(self
+            .collect_result_sets()?
+            .into_iter()
+            .flatten()
+            .collect())
     }
 
-    /// Read messages until ReadyForQuery, assembling rows and surfacing any
-    /// ErrorResponse as `Error::Db`.
-    fn collect_results(&mut self) -> Result<Vec<Row>> {
+    /// Read messages until ReadyForQuery, partitioning rows into one set per
+    /// statement. Each `CommandComplete` (or `EmptyQueryResponse`) closes the
+    /// current set, so multi-statement simple queries keep their sets separate.
+    /// Any `ErrorResponse` is surfaced as `Error::Db` once the stream drains.
+    fn collect_result_sets(&mut self) -> Result<Vec<Vec<Row>>> {
+        let mut sets: Vec<Vec<Row>> = Vec::new();
         let mut columns: Option<Arc<Vec<FieldDescription>>> = None;
-        let mut rows: Vec<Row> = Vec::new();
+        let mut current: Vec<Row> = Vec::new();
         let mut pending_error: Option<Error> = None;
 
         loop {
@@ -138,15 +232,21 @@ impl Connection {
                     let cols = columns.clone().ok_or_else(|| {
                         Error::Protocol("DataRow arrived before RowDescription".into())
                     })?;
-                    rows.push(Row::new(cols, values));
+                    current.push(Row::new(cols, values));
                 }
                 BackendMessage::CommandComplete { .. }
-                | BackendMessage::EmptyQueryResponse
-                | BackendMessage::ParseComplete
+                | BackendMessage::EmptyQueryResponse => {
+                    // A statement finished: close its result set.
+                    sets.push(std::mem::take(&mut current));
+                    columns = None;
+                }
+                BackendMessage::ParseComplete
                 | BackendMessage::BindComplete
                 | BackendMessage::NoData
                 | BackendMessage::ParameterDescription(_)
-                | BackendMessage::NoticeResponse(_) => {}
+                | BackendMessage::NoticeResponse(_)
+                | BackendMessage::NotificationResponse { .. }
+                | BackendMessage::Unknown { .. } => {}
                 BackendMessage::ParameterStatus { name, value } => {
                     // A SET or similar can push a fresh parameter mid-stream.
                     self.parameters.push((name, value));
@@ -163,9 +263,15 @@ impl Connection {
             }
         }
 
+        // Defensive: a valid server always sends CommandComplete before
+        // ReadyForQuery, but never drop rows if it did not.
+        if !current.is_empty() {
+            sets.push(current);
+        }
+
         match pending_error {
             Some(e) => Err(e),
-            None => Ok(rows),
+            None => Ok(sets),
         }
     }
 
@@ -195,7 +301,9 @@ impl Connection {
     /// coping with messages split across reads.
     fn read_message(&mut self) -> Result<BackendMessage> {
         loop {
-            if let Some((msg, consumed)) = BackendMessage::decode(&self.read_buf)? {
+            if let Some((msg, consumed)) =
+                BackendMessage::decode_with_cap(&self.read_buf, self.max_message_len)?
+            {
                 self.read_buf.drain(0..consumed);
                 return Ok(msg);
             }
