@@ -21,6 +21,13 @@ pub const FORMAT_BINARY: i16 = 1;
 /// Protocol version 3.0 encoded as the Int32 the server expects (0x00030000).
 pub const PROTOCOL_VERSION: i32 = 196608;
 
+/// Default ceiling on a server-declared message length, 64 MiB. A message whose
+/// length field exceeds this is rejected as a protocol error before a single
+/// body byte is buffered, so a hostile server cannot drive the client to OOM by
+/// announcing a multi-gigabyte frame. Configurable per connection via
+/// [`crate::config::Config::max_message_len`].
+pub const MAX_MESSAGE_LEN: usize = 64 * 1024 * 1024;
+
 // ------------------------------------------------------------------ encoding
 
 /// Small helper for building message bodies with big-endian integers and
@@ -95,6 +102,10 @@ pub enum FrontendMessage {
     },
     /// Cleartext or MD5 password; the string is whatever the auth layer computed.
     Password(String),
+    /// First SASL message: the chosen mechanism and the client-first bytes.
+    SaslInitialResponse { mechanism: String, data: Vec<u8> },
+    /// A subsequent SASL message: the client-final bytes.
+    SaslResponse { data: Vec<u8> },
     Query(String),
     Parse {
         statement: String,
@@ -144,6 +155,18 @@ impl FrontendMessage {
             FrontendMessage::Password(s) => {
                 let mut w = Writer::new();
                 w.cstr(s);
+                Writer::framed(b'p', &w.buf)
+            }
+            FrontendMessage::SaslInitialResponse { mechanism, data } => {
+                let mut w = Writer::new();
+                w.cstr(mechanism);
+                w.i32(data.len() as i32);
+                w.bytes(data);
+                Writer::framed(b'p', &w.buf)
+            }
+            FrontendMessage::SaslResponse { data } => {
+                let mut w = Writer::new();
+                w.bytes(data);
                 Writer::framed(b'p', &w.buf)
             }
             FrontendMessage::Query(sql) => {
@@ -392,6 +415,14 @@ impl<'a> Reader<'a> {
         Ok(s)
     }
 
+    /// The rest of the body from the cursor to the end. Used for SASL messages
+    /// whose payload runs to the end of the frame.
+    fn rest(&mut self) -> &'a [u8] {
+        let s = &self.buf[self.pos..];
+        self.pos = self.buf.len();
+        s
+    }
+
     /// Read a null-terminated C string as UTF-8 (lossy for non-UTF-8 bytes).
     fn cstr(&mut self) -> Result<String> {
         let start = self.pos;
@@ -413,7 +444,14 @@ pub enum AuthRequest {
     Ok,
     CleartextPassword,
     Md5Password { salt: [u8; 4] },
-    /// Any auth method Conduit does not implement (SCRAM, GSS, etc.).
+    /// Server offers SASL; `mechanisms` lists the mechanism names it advertises
+    /// (Conduit implements SCRAM-SHA-256).
+    Sasl { mechanisms: Vec<String> },
+    /// SASL challenge carrying the server-first message bytes.
+    SaslContinue { data: Vec<u8> },
+    /// SASL completion carrying the server-final message bytes.
+    SaslFinal { data: Vec<u8> },
+    /// Any auth method Conduit does not implement (GSS, SSPI, etc.).
     Unsupported(i32),
 }
 
@@ -467,6 +505,13 @@ pub enum BackendMessage {
     NoData,
     EmptyQueryResponse,
     ParameterDescription(Vec<i32>),
+    /// An asynchronous NOTIFY delivered by the server. It can arrive at any point
+    /// once the connection is established and is not tied to any query.
+    NotificationResponse {
+        pid: i32,
+        channel: String,
+        payload: String,
+    },
     /// A message whose tag we do not model; skipped by length, never fatal.
     Unknown { tag: u8 },
 }
@@ -478,6 +523,17 @@ impl BackendMessage {
     /// should read more from the socket), or `Ok(Some((msg, consumed)))` with the
     /// number of bytes the message occupied. Malformed framing is a protocol error.
     pub fn decode(buf: &[u8]) -> Result<Option<(BackendMessage, usize)>> {
+        BackendMessage::decode_with_cap(buf, MAX_MESSAGE_LEN)
+    }
+
+    /// Like [`BackendMessage::decode`] but with a caller-supplied ceiling on the
+    /// declared message length. A length above `max_len` is a protocol error,
+    /// rejected before any body byte is buffered so an oversized frame cannot
+    /// exhaust memory.
+    pub fn decode_with_cap(
+        buf: &[u8],
+        max_len: usize,
+    ) -> Result<Option<(BackendMessage, usize)>> {
         if buf.len() < 5 {
             return Ok(None);
         }
@@ -486,6 +542,11 @@ impl BackendMessage {
         if len < 4 {
             return Err(Error::Protocol(format!(
                 "message length {len} is smaller than the 4-byte length field"
+            )));
+        }
+        if len as usize > max_len {
+            return Err(Error::Protocol(format!(
+                "message length {len} exceeds the {max_len}-byte cap"
             )));
         }
         let total = 1 + len as usize; // tag byte plus the length-covered region
@@ -512,6 +573,25 @@ impl BackendMessage {
                             salt: [salt[0], salt[1], salt[2], salt[3]],
                         }
                     }
+                    10 => {
+                        // A list of NUL-terminated mechanism names, ended by an
+                        // empty name.
+                        let mut mechanisms = Vec::new();
+                        loop {
+                            let m = r.cstr()?;
+                            if m.is_empty() {
+                                break;
+                            }
+                            mechanisms.push(m);
+                        }
+                        AuthRequest::Sasl { mechanisms }
+                    }
+                    11 => AuthRequest::SaslContinue {
+                        data: r.rest().to_vec(),
+                    },
+                    12 => AuthRequest::SaslFinal {
+                        data: r.rest().to_vec(),
+                    },
                     other => AuthRequest::Unsupported(other),
                 };
                 BackendMessage::Authentication(auth)
@@ -577,6 +657,16 @@ impl BackendMessage {
             b'C' => {
                 let tag = r.cstr()?;
                 BackendMessage::CommandComplete { tag }
+            }
+            b'A' => {
+                let pid = r.i32()?;
+                let channel = r.cstr()?;
+                let payload = r.cstr()?;
+                BackendMessage::NotificationResponse {
+                    pid,
+                    channel,
+                    payload,
+                }
             }
             b'E' => BackendMessage::ErrorResponse(parse_notice_fields(&mut r)?),
             b'N' => BackendMessage::NoticeResponse(parse_notice_fields(&mut r)?),

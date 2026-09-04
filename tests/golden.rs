@@ -339,3 +339,21 @@ fn unknown_message_is_skipped_by_length() {
     assert_eq!(n, 7);
     assert_eq!(m, BackendMessage::Unknown { tag: b'W' });
 }
+
+#[test]
+fn oversized_declared_length_is_rejected_before_buffering() {
+    // The DoS repro: 'D' (DataRow) with a declared length of 0x7FFFFFFF (~2 GiB).
+    // Only the 5-byte header is present; a naive decoder would answer "need more"
+    // and let the caller buffer toward OOM. The cap must reject it instead, with
+    // bounded memory (we hand it just five bytes).
+    let header: &[u8] = &[b'D', 0x7f, 0xff, 0xff, 0xff];
+    let err = BackendMessage::decode(header).unwrap_err();
+    match err {
+        conduit::Error::Protocol(msg) => assert!(msg.contains("exceeds")),
+        other => panic!("expected Protocol error, got {other:?}"),
+    }
+
+    // A message just over an explicit cap is rejected; one at the cap decodes.
+    let just_over: &[u8] = &[b'D', 0, 0, 0, 9, 0, 0, 0, 0];
+    assert!(BackendMessage::decode_with_cap(just_over, 8).is_err());
+}
