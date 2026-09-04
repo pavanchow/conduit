@@ -2,11 +2,551 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>conduit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conduit — a readable PostgreSQL wire-protocol driver</title>
+<style>
+  :root {
+    --bg: #fbfbfd;
+    --panel: #ffffff;
+    --ink: #1d1d1f;
+    --muted: #6e6e73;
+    --line: #e3e3e6;
+    --accent: #0071e3;
+    --fe: #0071e3;
+    --be: #34a06a;
+    --err: #d93a2b;
+    --code-bg: #f5f5f7;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  /* Dark overrides come AFTER the base body rule so text is never light-on-white. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --panel: #1c1c1e;
+      --ink: #f5f5f7;
+      --muted: #98989d;
+      --line: #2c2c2e;
+      --accent: #2997ff;
+      --fe: #2997ff;
+      --be: #4cd08a;
+      --err: #ff6a5a;
+      --code-bg: #2c2c2e;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.5);
+    }
+    body { background: var(--bg); color: var(--ink); }
+  }
+  header {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 72px 24px 24px;
+    text-align: center;
+  }
+  h1 { font-size: 44px; letter-spacing: -0.02em; margin: 0 0 10px; }
+  .tag { color: var(--accent); font-weight: 600; }
+  header p { font-size: 20px; color: var(--muted); max-width: 640px; margin: 0 auto; }
+  main { max-width: 960px; margin: 0 auto; padding: 12px 24px 96px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 22px;
+    margin: 22px 0;
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+  .segmented { display: inline-flex; background: var(--code-bg); border-radius: 12px; padding: 4px; gap: 2px; flex-wrap: wrap; }
+  .segmented button {
+    border: 0; background: transparent; color: var(--ink);
+    font-family: var(--sans); font-size: 14px; font-weight: 500;
+    padding: 8px 14px; border-radius: 9px; cursor: pointer; transition: background .15s;
+  }
+  .segmented button.active { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,0.12); color: var(--accent); }
+  .nav { display: flex; gap: 10px; align-items: center; }
+  .nav button {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    font-family: var(--sans); font-size: 14px; font-weight: 500;
+    padding: 8px 16px; border-radius: 10px; cursor: pointer;
+  }
+  .nav button:disabled { opacity: 0.4; cursor: default; }
+  .nav .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .preset-desc { color: var(--muted); font-size: 15px; margin: 4px 2px 0; }
+
+  .steps { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+  .step {
+    border: 1px solid var(--line); border-radius: 14px; padding: 0;
+    overflow: hidden; opacity: 0.42; transition: opacity .2s, border-color .2s, box-shadow .2s;
+  }
+  .step.revealed { opacity: 1; }
+  .step.active { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .step-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+  .badge {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 6px; color: #fff; flex-shrink: 0;
+  }
+  .badge.fe { background: var(--fe); }
+  .badge.be { background: var(--be); }
+  .badge.be.iserr { background: var(--err); }
+  .step-name { font-weight: 600; font-size: 15px; }
+  .step-dir { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .step-body { padding: 0 16px 16px; display: none; }
+  .step.revealed .step-body { display: block; }
+  .kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 16px; font-size: 13.5px; margin: 10px 0 0; }
+  .kv .k { color: var(--muted); font-family: var(--mono); }
+  .kv .v { font-family: var(--mono); word-break: break-all; }
+  .hexlabel { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 6px; }
+  .hex { font-family: var(--mono); font-size: 12.5px; background: var(--code-bg); border-radius: 10px; padding: 12px; line-height: 1.7; word-break: break-all; }
+  .hex .tagb { color: var(--accent); font-weight: 700; }
+  .hex .lenb { color: var(--be); }
+
+  table.result { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 8px; }
+  table.result th, table.result td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; font-family: var(--mono); }
+  table.result th { background: var(--code-bg); font-weight: 600; }
+  table.result td.null { color: var(--muted); font-style: italic; }
+  .result-note { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 24px 60px; }
+  a { color: var(--accent); text-decoration: none; }
+  code { font-family: var(--mono); background: var(--code-bg); padding: 1px 5px; border-radius: 5px; font-size: 0.9em; }
+</style>
 </head>
 <body>
-<h1>conduit</h1>
-<p>Site coming soon.</p>
-<p><a href="https://github.com/pavanchow/conduit">View repository</a></p>
+<header>
+  <h1>Conduit</h1>
+  <p>A PostgreSQL driver you can read end to end. The <span class="tag">v3 wire protocol</span>, from the startup handshake to typed rows, with no ORM, no libpq, and hand-written MD5.</p>
+</header>
+
+<main>
+  <div class="card">
+    <div class="controls">
+      <div class="segmented" id="presets"></div>
+      <div class="nav">
+        <button id="prev">‹ Back</button>
+        <button id="next" class="primary">Step ›</button>
+        <button id="all">Reveal all</button>
+      </div>
+    </div>
+    <p class="preset-desc" id="presetDesc"></p>
+  </div>
+
+  <div class="steps" id="steps"></div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <div class="hexlabel">Decoded result set</div>
+    <div id="result"></div>
+  </div>
+</main>
+
+<footer>
+  This page ports the Conduit codec to JavaScript, so every byte here matches the Rust driver.
+  <br><a href="https://github.com/pavanchow/conduit">github.com/pavanchow/conduit</a> · by Pavan Nallamothu
+</footer>
+
+<script>
+"use strict";
+
+// ------------------------------------------------------------- byte utilities
+const TE = new TextEncoder();
+function utf8(s) { return Array.from(TE.encode(s)); }
+function i16be(v) { return [(v >> 8) & 0xff, v & 0xff]; }
+function i32be(v) { return [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff]; }
+
+class W {
+  constructor() { this.b = []; }
+  u8(v) { this.b.push(v & 0xff); return this; }
+  i16(v) { this.b.push(...i16be(v)); return this; }
+  i32(v) { this.b.push(...i32be(v)); return this; }
+  bytes(a) { for (const x of a) this.b.push(x & 0xff); return this; }
+  cstr(s) { this.b.push(...utf8(s), 0); return this; }
+}
+// Frame body with a type tag and a length that counts itself plus the body.
+function framed(tag, body) { return [tag, ...i32be(body.length + 4), ...body]; }
+function framedUntagged(body) { return [...i32be(body.length + 4), ...body]; }
+
+// ------------------------------------------------------------- hand-written MD5
+const MD5_S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+  4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
+const MD5_K = [0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,
+  0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,
+  0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,
+  0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,
+  0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,
+  0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,
+  0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,
+  0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391];
+function rotl(x, c) { return ((x << c) | (x >>> (32 - c))) >>> 0; }
+function leHex(x) {
+  let s = "";
+  for (let i = 0; i < 4; i++) { s += ((x >>> (i * 8)) & 0xff).toString(16).padStart(2, "0"); }
+  return s;
+}
+function md5hex(bytesArr) {
+  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+  const msg = bytesArr.slice();
+  const bitLen = msg.length * 8;
+  msg.push(0x80);
+  while (msg.length % 64 !== 56) msg.push(0);
+  let bl = bitLen;
+  for (let i = 0; i < 8; i++) { msg.push(bl & 0xff); bl = Math.floor(bl / 256); }
+  for (let off = 0; off < msg.length; off += 64) {
+    const M = new Array(16);
+    for (let i = 0; i < 16; i++) {
+      M[i] = (msg[off + i*4] | (msg[off + i*4+1] << 8) | (msg[off + i*4+2] << 16) | (msg[off + i*4+3] << 24)) >>> 0;
+    }
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16) { F = (B & C) | (~B & D); g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C); g = (5*i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D; g = (3*i + 5) % 16; }
+      else { F = C ^ (B | ~D); g = (7*i) % 16; }
+      F = (F + A + MD5_K[i] + M[g]) >>> 0;
+      A = D; D = C; C = B;
+      B = (B + rotl(F, MD5_S[i])) >>> 0;
+    }
+    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+  }
+  return leHex(a0) + leHex(b0) + leHex(c0) + leHex(d0);
+}
+// "md5" + hex(md5( hex(md5(password + user)) + salt ))
+function md5Password(user, password, salt) {
+  const inner = md5hex(utf8(password + user));
+  const salted = utf8(inner).concat(salt);
+  return "md5" + md5hex(salted);
+}
+
+// ------------------------------------------------------------- frontend encoders
+const FE = {
+  startup(user, db, params = []) {
+    const w = new W().i32(196608).cstr("user").cstr(user).cstr("database").cstr(db);
+    for (const [k, v] of params) w.cstr(k).cstr(v);
+    w.u8(0);
+    return framedUntagged(w.b);
+  },
+  password(s) { return framed(0x70, new W().cstr(s).b); },
+  query(sql) { return framed(0x51, new W().cstr(sql).b); },
+  parse(stmt, sql, types = []) {
+    const w = new W().cstr(stmt).cstr(sql).i16(types.length);
+    for (const t of types) w.i32(t);
+    return framed(0x50, w.b);
+  },
+  bind(portal, stmt, params) {
+    const w = new W().cstr(portal).cstr(stmt).i16(1).i16(0).i16(params.length);
+    for (const p of params) {
+      if (p === null) w.i32(-1);
+      else { const bytes = utf8(p); w.i32(bytes.length).bytes(bytes); }
+    }
+    w.i16(1).i16(0);
+    return framed(0x42, w.b);
+  },
+  describe(kind, name) { return framed(0x44, new W().u8(kind).cstr(name).b); },
+  execute(portal, max) { return framed(0x45, new W().cstr(portal).i32(max).b); },
+  sync() { return framed(0x53, []); },
+};
+
+// ------------------------------------------------------------- backend encoders
+const BE = {
+  authOk() { return framed(0x52, i32be(0)); },
+  authMd5(salt) { return framed(0x52, [...i32be(5), ...salt]); },
+  parameterStatus(n, v) { return framed(0x53, new W().cstr(n).cstr(v).b); },
+  backendKeyData(pid, secret) { return framed(0x4b, new W().i32(pid).i32(secret).b); },
+  readyForQuery(status) { return framed(0x5a, [status.charCodeAt(0)]); },
+  rowDescription(fields) {
+    const w = new W().i16(fields.length);
+    for (const f of fields) {
+      w.cstr(f.name).i32(0).i16(0).i32(f.oid).i16(-1).i32(-1).i16(0);
+    }
+    return framed(0x54, w.b);
+  },
+  dataRow(cols) {
+    const w = new W().i16(cols.length);
+    for (const c of cols) {
+      if (c === null) w.i32(-1);
+      else { const bytes = utf8(c); w.i32(bytes.length).bytes(bytes); }
+    }
+    return framed(0x44, w.b);
+  },
+  commandComplete(tag) { return framed(0x43, new W().cstr(tag).b); },
+  errorResponse(obj) {
+    const w = new W();
+    for (const [k, v] of Object.entries(obj)) { w.u8(k.charCodeAt(0)).cstr(v); }
+    w.u8(0);
+    return framed(0x45, w.b);
+  },
+  parseComplete() { return framed(0x31, []); },
+  bindComplete() { return framed(0x32, []); },
+};
+
+// ------------------------------------------------------------- reader + decoders
+class R {
+  constructor(b, p = 0) { this.b = b; this.p = p; }
+  u8() { return this.b[this.p++]; }
+  i16() { const v = ((this.b[this.p] << 8) | this.b[this.p+1]); this.p += 2; return (v << 16) >> 16; }
+  i32() { const v = ((this.b[this.p] << 24) | (this.b[this.p+1] << 16) | (this.b[this.p+2] << 8) | this.b[this.p+3]); this.p += 4; return v | 0; }
+  cstr() { const start = this.p; while (this.b[this.p] !== 0) this.p++; const s = new TextDecoder().decode(new Uint8Array(this.b.slice(start, this.p))); this.p++; return s; }
+  bytes(n) { const s = this.b.slice(this.p, this.p + n); this.p += n; return s; }
+}
+const OIDS = { 16: "bool", 20: "int8", 21: "int2", 23: "int4", 25: "text", 700: "float4", 701: "float8", 1042: "bpchar", 1043: "varchar" };
+
+// Decode a frontend message the way the Rust FrontendMessage::decode does.
+function feDecode(bytes) {
+  if (bytes[0] === 0) {
+    const r = new R(bytes, 4);
+    r.i32();
+    const fields = [];
+    while (true) {
+      const k = r.cstr();
+      if (k === "") break;
+      fields.push([k, r.cstr()]);
+    }
+    return { name: "StartupMessage", fields };
+  }
+  const tag = bytes[0];
+  const r = new R(bytes, 5);
+  switch (tag) {
+    case 0x70: return { name: "PasswordMessage", fields: [["password", r.cstr()]] };
+    case 0x51: return { name: "Query", fields: [["sql", r.cstr()]] };
+    case 0x50: {
+      const stmt = r.cstr(), sql = r.cstr(), n = r.i16();
+      return { name: "Parse", fields: [["statement", stmt || "(unnamed)"], ["query", sql], ["param types", n]] };
+    }
+    case 0x42: {
+      const portal = r.cstr(), stmt = r.cstr();
+      const nf = r.i16(); for (let i = 0; i < nf; i++) r.i16();
+      const np = r.i16(); const ps = [];
+      for (let i = 0; i < np; i++) { const l = r.i32(); ps.push(l === -1 ? "NULL" : new TextDecoder().decode(new Uint8Array(r.bytes(l)))); }
+      return { name: "Bind", fields: [["portal", portal || "(unnamed)"], ["statement", stmt || "(unnamed)"], ["parameters", "[" + ps.join(", ") + "]  (text format = data, never SQL)"]] };
+    }
+    case 0x44: { const kind = String.fromCharCode(r.u8()); return { name: "Describe", fields: [["kind", kind === "P" ? "portal" : "statement"], ["name", r.cstr() || "(unnamed)"]] }; }
+    case 0x45: { const portal = r.cstr(); return { name: "Execute", fields: [["portal", portal || "(unnamed)"], ["max rows", r.i32() || "unlimited"]] }; }
+    case 0x53: return { name: "Sync", fields: [] };
+    case 0x58: return { name: "Terminate", fields: [] };
+  }
+  return { name: "Unknown", fields: [] };
+}
+
+// Decode a backend message the way the Rust BackendMessage::decode does.
+function beDecode(bytes) {
+  const tag = bytes[0];
+  const r = new R(bytes, 5);
+  switch (tag) {
+    case 0x52: {
+      const code = r.i32();
+      if (code === 0) return { name: "AuthenticationOk", fields: [["status", "authenticated"]] };
+      if (code === 3) return { name: "AuthenticationCleartextPassword", fields: [["request", "send cleartext password"]] };
+      if (code === 5) { const s = r.bytes(4); return { name: "AuthenticationMD5Password", fields: [["salt", s.map(b => b.toString(16).padStart(2, "0")).join(" ")]] }; }
+      return { name: "Authentication", fields: [["code", code]] };
+    }
+    case 0x53: return { name: "ParameterStatus", fields: [[r.cstr(), r.cstr()]] };
+    case 0x4b: return { name: "BackendKeyData", fields: [["pid", r.i32()], ["secret key", r.i32()]] };
+    case 0x5a: return { name: "ReadyForQuery", fields: [["status", ({ I: "idle", T: "in transaction", E: "failed transaction" })[String.fromCharCode(r.u8())]]] };
+    case 0x54: {
+      const n = r.i16(); const cols = [];
+      for (let i = 0; i < n; i++) { const name = r.cstr(); r.i32(); r.i16(); const oid = r.i32(); r.i16(); r.i32(); r.i16(); cols.push({ name, oid }); }
+      return { name: "RowDescription", fields: cols.map(c => [c.name, (OIDS[c.oid] || "?") + " (oid " + c.oid + ")"]), _cols: cols };
+    }
+    case 0x44: {
+      const n = r.i16(); const vals = [];
+      for (let i = 0; i < n; i++) { const l = r.i32(); vals.push(l === -1 ? null : new TextDecoder().decode(new Uint8Array(r.bytes(l)))); }
+      return { name: "DataRow", fields: vals.map((v, i) => ["column " + i, v === null ? "NULL" : v]), _vals: vals };
+    }
+    case 0x43: return { name: "CommandComplete", fields: [["tag", r.cstr()]] };
+    case 0x45: {
+      const fields = []; while (true) { const c = r.u8(); if (c === 0) break; fields.push([String.fromCharCode(c), r.cstr()]); }
+      const map = Object.fromEntries(fields);
+      return { name: "ErrorResponse", isErr: true, fields: [["severity", map.S || "ERROR"], ["SQLSTATE", map.C || ""], ["message", map.M || ""]] };
+    }
+    case 0x31: return { name: "ParseComplete", fields: [] };
+    case 0x32: return { name: "BindComplete", fields: [] };
+    case 0x6e: return { name: "NoData", fields: [] };
+  }
+  return { name: "Unknown", fields: [] };
+}
+
+// ------------------------------------------------------------- session presets
+function step(dir, bytes) { return { dir, bytes, decoded: dir === "FE" ? feDecode(bytes) : beDecode(bytes) }; }
+
+const SALT = [0x1a, 0x2b, 0x3c, 0x4d];
+
+const PRESETS = {
+  select: {
+    label: "SELECT with a NULL",
+    desc: "A simple-protocol query that returns typed rows: an int, text, a float, a bool, and a NULL.",
+    build() {
+      const cols = [
+        { name: "id", oid: 23 }, { name: "name", oid: 25 },
+        { name: "score", oid: 701 }, { name: "active", oid: 16 }, { name: "note", oid: 25 },
+      ];
+      return [
+        step("FE", FE.startup("conduit", "app")),
+        step("BE", BE.authOk()),
+        step("BE", BE.parameterStatus("server_version", "16.0")),
+        step("BE", BE.backendKeyData(4242, 987654321)),
+        step("BE", BE.readyForQuery("I")),
+        step("FE", FE.query("SELECT id, name, score, active, note FROM people")),
+        step("BE", BE.rowDescription(cols)),
+        step("BE", BE.dataRow(["1", "alice", "3.5", "t", null])),
+        step("BE", BE.dataRow(["2", "bob", "-1.25", "f", "hi"])),
+        step("BE", BE.commandComplete("SELECT 2")),
+        step("BE", BE.readyForQuery("I")),
+      ];
+    },
+  },
+  md5: {
+    label: "MD5 authentication",
+    desc: "The server challenges with a salt; Conduit answers with md5(md5(password+user)+salt), computed here by the same hand-written MD5.",
+    build() {
+      const hashed = md5Password("conduit", "hunter2", SALT);
+      return [
+        step("FE", FE.startup("conduit", "app")),
+        step("BE", BE.authMd5(SALT)),
+        step("FE", FE.password(hashed)),
+        step("BE", BE.authOk()),
+        step("BE", BE.parameterStatus("server_version", "16.0")),
+        step("BE", BE.backendKeyData(4242, 987654321)),
+        step("BE", BE.readyForQuery("I")),
+      ];
+    },
+  },
+  extended: {
+    label: "Parameterized query",
+    desc: "The extended protocol: Parse, Bind, Describe, Execute, Sync. Parameters travel in the Bind message as text data, so a value can never be read as SQL.",
+    build() {
+      return [
+        step("FE", FE.startup("conduit", "app")),
+        step("BE", BE.authOk()),
+        step("BE", BE.readyForQuery("I")),
+        step("FE", FE.parse("", "SELECT $1::int AS id, $2::text AS name", [])),
+        step("FE", FE.bind("", "", ["42", "robert'); DROP TABLE students;--"])),
+        step("FE", FE.describe(0x50, "")),
+        step("FE", FE.execute("", 0)),
+        step("FE", FE.sync()),
+        step("BE", BE.parseComplete()),
+        step("BE", BE.bindComplete()),
+        step("BE", BE.rowDescription([{ name: "id", oid: 23 }, { name: "name", oid: 25 }])),
+        step("BE", BE.dataRow(["42", "robert'); DROP TABLE students;--"])),
+        step("BE", BE.commandComplete("SELECT 1")),
+        step("BE", BE.readyForQuery("I")),
+      ];
+    },
+  },
+  error: {
+    label: "ErrorResponse",
+    desc: "A bad query. The server replies with an ErrorResponse carrying a SQLSTATE, which Conduit surfaces as Error::Db { code, message }.",
+    build() {
+      return [
+        step("FE", FE.startup("conduit", "app")),
+        step("BE", BE.authOk()),
+        step("BE", BE.readyForQuery("I")),
+        step("FE", FE.query("SELECT boom")),
+        step("BE", BE.errorResponse({ S: "ERROR", C: "42601", M: "syntax error at or near \"boom\"" })),
+        step("BE", BE.readyForQuery("I")),
+      ];
+    },
+  },
+};
+
+// ------------------------------------------------------------- rendering
+let current = 0, session = [], activePreset = "select";
+
+function hexHtml(bytes, dir) {
+  const parts = bytes.map((b, i) => {
+    const h = b.toString(16).padStart(2, "0");
+    if (dir === "FE" && bytes[0] === 0) { return i < 4 ? `<span class="lenb">${h}</span>` : h; }
+    if (i === 0) return `<span class="tagb">${h}</span>`;
+    if (i >= 1 && i <= 4) return `<span class="lenb">${h}</span>`;
+    return h;
+  });
+  return parts.join(" ");
+}
+
+function renderSteps() {
+  const wrap = document.getElementById("steps");
+  wrap.innerHTML = "";
+  session.forEach((s, idx) => {
+    const d = s.decoded;
+    const el = document.createElement("div");
+    el.className = "step" + (idx <= current ? " revealed" : "") + (idx === current ? " active" : "");
+    const isErr = d.isErr ? " iserr" : "";
+    const kv = d.fields.map(([k, v]) => `<div class="k">${escapeHtml(String(k))}</div><div class="v">${escapeHtml(String(v))}</div>`).join("");
+    el.innerHTML = `
+      <div class="step-head">
+        <span class="badge ${s.dir.toLowerCase()}${isErr}">${s.dir}</span>
+        <span class="step-name">${d.name}</span>
+        <span class="step-dir">${s.dir === "FE" ? "client → server" : "server → client"} · ${s.bytes.length} bytes</span>
+      </div>
+      <div class="step-body">
+        ${kv ? `<div class="kv">${kv}</div>` : `<div class="kv"><div class="k">(no body)</div><div class="v"></div></div>`}
+        <div class="hexlabel">Wire bytes</div>
+        <div class="hex">${hexHtml(s.bytes, s.dir)}</div>
+      </div>`;
+    el.querySelector(".step-head").addEventListener("click", () => { current = idx; update(); });
+    wrap.appendChild(el);
+  });
+}
+
+function renderResult() {
+  const card = document.getElementById("resultCard");
+  // Build the table from the revealed backend messages.
+  let cols = null, rows = [];
+  for (let i = 0; i <= current; i++) {
+    const d = session[i].decoded;
+    if (d._cols) { cols = d._cols; rows = []; }
+    else if (d._vals && cols) rows.push(d._vals);
+  }
+  if (!cols || rows.length === 0) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  const head = "<tr>" + cols.map(c => `<th>${escapeHtml(c.name)}<br><span style="font-weight:400;color:var(--muted)">${OIDS[c.oid] || "?"}</span></th>`).join("") + "</tr>";
+  const body = rows.map(r => "<tr>" + r.map(v => v === null ? `<td class="null">NULL</td>` : `<td>${escapeHtml(v)}</td>`).join("") + "</tr>").join("");
+  document.getElementById("result").innerHTML = `<table class="result">${head}${body}</table><div class="result-note">${rows.length} row${rows.length === 1 ? "" : "s"}, decoded from the DataRow bytes above.</div>`;
+}
+
+function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function update() {
+  renderSteps();
+  renderResult();
+  document.getElementById("prev").disabled = current <= 0;
+  document.getElementById("next").disabled = current >= session.length - 1;
+  const active = document.querySelector(".step.active");
+  if (active) active.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function loadPreset(key) {
+  activePreset = key;
+  session = PRESETS[key].build();
+  current = 0;
+  document.getElementById("presetDesc").textContent = PRESETS[key].desc;
+  document.querySelectorAll("#presets button").forEach(b => b.classList.toggle("active", b.dataset.key === key));
+  update();
+}
+
+function initPresets() {
+  const bar = document.getElementById("presets");
+  for (const [key, p] of Object.entries(PRESETS)) {
+    const b = document.createElement("button");
+    b.textContent = p.label;
+    b.dataset.key = key;
+    b.addEventListener("click", () => loadPreset(key));
+    bar.appendChild(b);
+  }
+}
+
+document.getElementById("next").addEventListener("click", () => { if (current < session.length - 1) { current++; update(); } });
+document.getElementById("prev").addEventListener("click", () => { if (current > 0) { current--; update(); } });
+document.getElementById("all").addEventListener("click", () => { current = session.length - 1; update(); });
+
+initPresets();
+loadPreset("select");
+</script>
 </body>
 </html>
