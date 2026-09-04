@@ -122,7 +122,7 @@
 <body>
 <header>
   <h1>Conduit</h1>
-  <p>A PostgreSQL driver you can read end to end. The <span class="tag">v3 wire protocol</span>, from the startup handshake to typed rows, with no ORM, no libpq, and hand-written MD5.</p>
+  <p>A PostgreSQL driver you can read end to end. The <span class="tag">v3 wire protocol</span>, from the startup handshake to typed rows, with no ORM, no libpq, and hand-written crypto (MD5 and the SHA-256 family for SCRAM).</p>
 </header>
 
 <main>
@@ -224,6 +224,103 @@ function md5Password(user, password, salt) {
   return "md5" + md5hex(salted);
 }
 
+// ------------------------------------------------------------- hand-written SHA-256 / HMAC / PBKDF2
+const SHA_K = [
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+function rotr(x, c) { return ((x >>> c) | (x << (32 - c))) >>> 0; }
+function sha256(bytes) {
+  let h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const msg = bytes.slice();
+  const bitLen = msg.length * 8;
+  msg.push(0x80);
+  while (msg.length % 64 !== 56) msg.push(0);
+  const hi = Math.floor(bitLen / 0x100000000), lo = bitLen >>> 0;
+  msg.push((hi>>>24)&0xff,(hi>>>16)&0xff,(hi>>>8)&0xff,hi&0xff,(lo>>>24)&0xff,(lo>>>16)&0xff,(lo>>>8)&0xff,lo&0xff);
+  for (let off = 0; off < msg.length; off += 64) {
+    const w = new Array(64);
+    for (let i = 0; i < 16; i++) w[i] = ((msg[off+i*4]<<24)|(msg[off+i*4+1]<<16)|(msg[off+i*4+2]<<8)|msg[off+i*4+3])>>>0;
+    for (let i = 16; i < 64; i++) {
+      const s0 = (rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>>3))>>>0;
+      const s1 = (rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>>10))>>>0;
+      w[i] = (w[i-16]+s0+w[i-7]+s1)>>>0;
+    }
+    let a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = (rotr(e,6)^rotr(e,11)^rotr(e,25))>>>0;
+      const ch = ((e&f)^((~e)&g))>>>0;
+      const t1 = (hh+S1+ch+SHA_K[i]+w[i])>>>0;
+      const S0 = (rotr(a,2)^rotr(a,13)^rotr(a,22))>>>0;
+      const maj = ((a&b)^(a&c)^(b&c))>>>0;
+      const t2 = (S0+maj)>>>0;
+      hh=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0;
+    }
+    h = [(h[0]+a)>>>0,(h[1]+b)>>>0,(h[2]+c)>>>0,(h[3]+d)>>>0,(h[4]+e)>>>0,(h[5]+f)>>>0,(h[6]+g)>>>0,(h[7]+hh)>>>0];
+  }
+  const out = [];
+  for (const x of h) out.push((x>>>24)&0xff,(x>>>16)&0xff,(x>>>8)&0xff,x&0xff);
+  return out;
+}
+function hmacSha256(key, msg) {
+  let k = key.slice();
+  if (k.length > 64) k = sha256(k);
+  while (k.length < 64) k.push(0);
+  const ipad = k.map(b => b ^ 0x36), opad = k.map(b => b ^ 0x5c);
+  return sha256(opad.concat(sha256(ipad.concat(msg))));
+}
+function pbkdf2Sha256(pw, salt, iters) {
+  let u = hmacSha256(pw, salt.concat([0,0,0,1]));
+  const res = u.slice();
+  for (let i = 1; i < iters; i++) { u = hmacSha256(pw, u); for (let j = 0; j < 32; j++) res[j] ^= u[j]; }
+  return res;
+}
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function b64encode(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes[i]<<16) | ((bytes[i+1]||0)<<8) | (bytes[i+2]||0);
+    out += B64[(n>>18)&63] + B64[(n>>12)&63];
+    out += (i+1 < bytes.length) ? B64[(n>>6)&63] : "=";
+    out += (i+2 < bytes.length) ? B64[n&63] : "=";
+  }
+  return out;
+}
+function b64decode(str) {
+  const clean = str.replace(/[^A-Za-z0-9+/]/g, "");
+  const out = [];
+  for (let i = 0; i < clean.length; i += 4) {
+    const n = (B64.indexOf(clean[i])<<18) | (B64.indexOf(clean[i+1])<<12)
+      | ((clean[i+2] ? B64.indexOf(clean[i+2]) : 0)<<6) | (clean[i+3] ? B64.indexOf(clean[i+3]) : 0);
+    out.push((n>>16)&0xff);
+    if (clean[i+2]) out.push((n>>8)&0xff);
+    if (clean[i+3]) out.push(n&0xff);
+  }
+  return out;
+}
+// The client half of the SCRAM-SHA-256 exchange, computed live so the proof and
+// server signature are real bytes rather than a canned string.
+function scramClient(password, clientNonce, name, serverFirst) {
+  const clientFirstBare = "n=" + name + ",r=" + clientNonce;
+  const parts = Object.fromEntries(serverFirst.split(",").map(p => [p[0], p.slice(2)]));
+  const nonce = parts.r, salt = b64decode(parts.s), iters = parseInt(parts.i, 10);
+  const clientFinalBare = "c=biws,r=" + nonce;
+  const authMessage = clientFirstBare + "," + serverFirst + "," + clientFinalBare;
+  const salted = pbkdf2Sha256(utf8(password), salt, iters);
+  const clientKey = hmacSha256(salted, utf8("Client Key"));
+  const storedKey = sha256(clientKey);
+  const clientSig = hmacSha256(storedKey, utf8(authMessage));
+  const proof = clientKey.map((b, i) => b ^ clientSig[i]);
+  const serverKey = hmacSha256(salted, utf8("Server Key"));
+  const serverSig = hmacSha256(serverKey, utf8(authMessage));
+  return { clientFinal: clientFinalBare + ",p=" + b64encode(proof), serverFinal: "v=" + b64encode(serverSig) };
+}
+
 // ------------------------------------------------------------- frontend encoders
 const FE = {
   startup(user, db, params = []) {
@@ -233,6 +330,8 @@ const FE = {
     return framedUntagged(w.b);
   },
   password(s) { return framed(0x70, new W().cstr(s).b); },
+  saslInitial(mech, data) { const bytes = utf8(data); return framed(0x70, new W().cstr(mech).i32(bytes.length).bytes(bytes).b); },
+  saslResponse(data) { return framed(0x70, new W().bytes(utf8(data)).b); },
   query(sql) { return framed(0x51, new W().cstr(sql).b); },
   parse(stmt, sql, types = []) {
     const w = new W().cstr(stmt).cstr(sql).i16(types.length);
@@ -257,6 +356,9 @@ const FE = {
 const BE = {
   authOk() { return framed(0x52, i32be(0)); },
   authMd5(salt) { return framed(0x52, [...i32be(5), ...salt]); },
+  authSasl(mechs) { const w = new W().i32(10); for (const m of mechs) w.cstr(m); w.u8(0); return framed(0x52, w.b); },
+  authSaslContinue(data) { return framed(0x52, new W().i32(11).bytes(utf8(data)).b); },
+  authSaslFinal(data) { return framed(0x52, new W().i32(12).bytes(utf8(data)).b); },
   parameterStatus(n, v) { return framed(0x53, new W().cstr(n).cstr(v).b); },
   backendKeyData(pid, secret) { return framed(0x4b, new W().i32(pid).i32(secret).b); },
   readyForQuery(status) { return framed(0x5a, [status.charCodeAt(0)]); },
@@ -344,6 +446,9 @@ function beDecode(bytes) {
       if (code === 0) return { name: "AuthenticationOk", fields: [["status", "authenticated"]] };
       if (code === 3) return { name: "AuthenticationCleartextPassword", fields: [["request", "send cleartext password"]] };
       if (code === 5) { const s = r.bytes(4); return { name: "AuthenticationMD5Password", fields: [["salt", s.map(b => b.toString(16).padStart(2, "0")).join(" ")]] }; }
+      if (code === 10) { const mechs = []; while (true) { const m = r.cstr(); if (m === "") break; mechs.push(m); } return { name: "AuthenticationSASL", fields: mechs.map((m, i) => ["mechanism " + i, m]) }; }
+      if (code === 11) { const rest = new TextDecoder().decode(new Uint8Array(r.b.slice(r.p))); return { name: "AuthenticationSASLContinue", fields: [["server-first", rest]] }; }
+      if (code === 12) { const rest = new TextDecoder().decode(new Uint8Array(r.b.slice(r.p))); return { name: "AuthenticationSASLFinal", fields: [["server-final", rest]] }; }
       return { name: "Authentication", fields: [["code", code]] };
     }
     case 0x53: return { name: "ParameterStatus", fields: [[r.cstr(), r.cstr()]] };
@@ -373,7 +478,7 @@ function beDecode(bytes) {
 }
 
 // ------------------------------------------------------------- session presets
-function step(dir, bytes) { return { dir, bytes, decoded: dir === "FE" ? feDecode(bytes) : beDecode(bytes) }; }
+function step(dir, bytes, decoded) { return { dir, bytes, decoded: decoded || (dir === "FE" ? feDecode(bytes) : beDecode(bytes)) }; }
 
 const SALT = [0x1a, 0x2b, 0x3c, 0x4d];
 
@@ -413,6 +518,29 @@ const PRESETS = {
         step("BE", BE.authOk()),
         step("BE", BE.parameterStatus("server_version", "16.0")),
         step("BE", BE.backendKeyData(4242, 987654321)),
+        step("BE", BE.readyForQuery("I")),
+      ];
+    },
+  },
+  scram: {
+    label: "SCRAM-SHA-256 authentication",
+    desc: "The default since PostgreSQL 14. A SASL challenge-response over hand-written SHA-256, HMAC, PBKDF2, and base64. The proof and server signature are computed live in your browser from the RFC 7677 worked example.",
+    build() {
+      const clientNonce = "rOprNGfwEbeRWgbNEkqO";
+      const clientFirst = "n,,n=user,r=" + clientNonce;
+      const serverFirst = "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096";
+      const { clientFinal, serverFinal } = scramClient("pencil", clientNonce, "user", serverFirst);
+      return [
+        step("FE", FE.startup("user", "app")),
+        step("BE", BE.authSasl(["SCRAM-SHA-256"])),
+        step("FE", FE.saslInitial("SCRAM-SHA-256", clientFirst),
+          { name: "SASLInitialResponse", fields: [["mechanism", "SCRAM-SHA-256"], ["client-first", clientFirst]] }),
+        step("BE", BE.authSaslContinue(serverFirst)),
+        step("FE", FE.saslResponse(clientFinal),
+          { name: "SASLResponse", fields: [["client-final", clientFinal]] }),
+        step("BE", BE.authSaslFinal(serverFinal)),
+        step("BE", BE.authOk()),
+        step("BE", BE.parameterStatus("server_version", "16.0")),
         step("BE", BE.readyForQuery("I")),
       ];
     },

@@ -3,7 +3,9 @@
 A from-scratch PostgreSQL driver you can read end to end. Conduit speaks the real
 v3 wire protocol over a plain TCP socket, from the startup handshake to typed
 result rows, with no ORM, no libpq, no C bindings, and zero external
-dependencies. Even MD5 is written by hand.
+dependencies. Even the cryptography is written by hand: MD5, SHA-256,
+HMAC-SHA-256, PBKDF2, and base64 all live in the tree so SCRAM-SHA-256 auth
+needs nothing from outside.
 
 Most people reach a database through a driver they never open. Conduit is the
 opposite: the whole path is here in a few hundred lines of Rust, each protocol
@@ -20,12 +22,27 @@ talk to one".
 - Encodes every frontend message and decodes every backend message of the
   Postgres v3 protocol, each as its own type, with bounded parsing that returns
   a protocol error instead of panicking on a malformed length or a short buffer.
-- Authenticates with cleartext or MD5. The MD5 scheme
+- Rejects a server-declared message length above a configurable cap (default
+  64 MiB) before buffering a single body byte, so a hostile server cannot drive
+  the client to OOM by announcing a multi-gigabyte frame. Connect and read
+  timeouts (defaults 10s and 30s) keep a stalled or silent server from pinning
+  the client.
+- Authenticates with cleartext, MD5, or SCRAM-SHA-256, the default since
+  PostgreSQL 14. The MD5 scheme
   (`"md5" + hex(md5(hex(md5(password + user)) + salt))`) is built on a
-  hand-written RFC 1321 MD5.
+  hand-written RFC 1321 MD5. SCRAM runs the full RFC 5802 / RFC 7677 exchange
+  (client-first, server-first, client-final, server-final) on hand-written
+  SHA-256, HMAC-SHA-256, PBKDF2, and base64, and it verifies the server
+  signature before trusting the connection.
 - Runs queries two ways: the simple `Query` protocol, and the extended
   `Parse`/`Bind`/`Describe`/`Execute`/`Sync` protocol with text-format
   parameters, so a parameter is always data and never SQL.
+- Keeps multi-statement result sets separate. A simple query may hold several
+  `;`-separated statements, and `simple_query_multi` returns one result set per
+  statement rather than merging them. `simple_query` flattens the result and is
+  meant for a single statement.
+- Tolerates asynchronous `NotificationResponse` and unknown message tags
+  mid-stream, skipping them by length so a `NOTIFY` never breaks a query.
 - Decodes text-format columns by their type OID into `i16`/`i32`/`i64`/`f32`/
   `f64`/`bool`/`String`, with `NULL` as `Option` and a clear error on type
   mismatch.
@@ -60,9 +77,11 @@ server. Conduit does it two ways:
 2. **An in-process mock server.** A real `TcpListener` on `127.0.0.1:0` speaks
    enough of the protocol to script a session. The integration test runs the
    actual driver against it over real TCP and checks the whole stack: the
-   handshake completes, MD5 auth succeeds and fails correctly, a `SELECT` returns
-   typed rows including a `NULL`, a parameterized query round-trips its params,
-   and a bad query surfaces as `Error::Db` with the right SQLSTATE.
+   handshake completes, MD5 and SCRAM-SHA-256 auth each succeed with the right
+   password and fail cleanly with the wrong one (SCRAM also fails on a bad server
+   signature), a `SELECT` returns typed rows including a `NULL`, a parameterized
+   query round-trips its params, a multi-statement query keeps its result sets
+   separate, and a bad query surfaces as `Error::Db` with the right SQLSTATE.
 
 Because the mock encodes backend messages by hand while the driver decodes them
 (and vice versa for frontend messages), the two halves cross-check each other.
@@ -86,21 +105,23 @@ CONDUIT_PG_URL=postgres://user:pass@localhost:5432/db cargo test
 
 Conduit is a readable core, honest about its edges. It does not implement:
 
-- **SCRAM-SHA-256** auth. Modern Postgres defaults to it; Conduit covers
-  cleartext and MD5, which is enough to explain the handshake. A server that
-  requires SCRAM returns a clear `Error::Auth`.
 - **TLS.** Connections are plaintext TCP. There is no `SSLRequest` negotiation.
 - **The binary result format.** Conduit requests text for every column and
   parameter. Text decoding is the readable path and sidesteps per-type binary
   layouts.
-- **Connection pooling, prepared-statement caching, COPY, LISTEN/NOTIFY,
-  pipelining, and async.** The API is synchronous and one query at a time.
+- **Connection pooling, prepared-statement caching, COPY, a full LISTEN/NOTIFY
+  subscription API, pipelining, and async.** The API is synchronous and one
+  query at a time. A `NotificationResponse` that arrives is tolerated and
+  skipped, but there is no channel to deliver it to.
 
 ## Layout
 
 ```
 src/message.rs     the protocol codec (encode frontend, decode backend)
 src/md5.rs         hand-written RFC 1321 MD5
+src/sha256.rs      hand-written SHA-256, HMAC-SHA-256, PBKDF2-HMAC-SHA-256
+src/base64.rs      hand-written RFC 4648 base64
+src/scram.rs       the SCRAM-SHA-256 client exchange
 src/auth.rs        the Postgres MD5 password scheme
 src/types.rs       OID-driven text decoding, ToSql / FromSql
 src/row.rs         typed row access by index or name
