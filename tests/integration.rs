@@ -55,6 +55,7 @@ fn handshake_and_typed_select() {
 fn md5_auth_succeeds_with_right_password() {
     let server = MockServer::start(MockConfig {
         md5_password: Some("hunter2".into()),
+        ..Default::default()
     })
     .unwrap();
     let cfg = config_for(&server).password("hunter2");
@@ -68,6 +69,7 @@ fn md5_auth_succeeds_with_right_password() {
 fn md5_auth_fails_with_wrong_password() {
     let server = MockServer::start(MockConfig {
         md5_password: Some("hunter2".into()),
+        ..Default::default()
     })
     .unwrap();
     let cfg = config_for(&server).password("wrong-password");
@@ -117,6 +119,100 @@ fn error_response_surfaces_as_db_error() {
     let rows = conn.simple_query("SELECT * FROM people").unwrap();
     assert_eq!(rows.len(), 2);
 
+    conn.close();
+}
+
+#[test]
+fn scram_auth_succeeds_with_right_password() {
+    let server = MockServer::start(MockConfig {
+        scram_password: Some("pencil".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    let cfg = config_for(&server).password("pencil");
+    let mut conn = Connection::connect(&cfg).unwrap();
+    let rows = conn.simple_query("SELECT * FROM people").unwrap();
+    assert_eq!(rows.len(), 2);
+    conn.close();
+}
+
+#[test]
+fn scram_auth_fails_with_wrong_password() {
+    let server = MockServer::start(MockConfig {
+        scram_password: Some("pencil".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    let cfg = config_for(&server).password("wrong");
+    let err = Connection::connect(&cfg).unwrap_err();
+    match err {
+        // The mock rejects the proof with SQLSTATE 28P01.
+        Error::Db { code, .. } => assert_eq!(code, "28P01"),
+        Error::Auth(_) => {}
+        other => panic!("expected auth failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn scram_auth_fails_on_bad_server_signature() {
+    let server = MockServer::start(MockConfig {
+        scram_password: Some("pencil".into()),
+        scram_bad_server_signature: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let cfg = config_for(&server).password("pencil");
+    let err = Connection::connect(&cfg).unwrap_err();
+    match err {
+        Error::Auth(m) => assert!(m.contains("signature")),
+        other => panic!("expected Error::Auth on bad server signature, got {other:?}"),
+    }
+}
+
+#[test]
+fn notification_before_ready_does_not_break_query() {
+    let server = MockServer::start(MockConfig::default()).unwrap();
+    let mut conn = Connection::connect(&config_for(&server)).unwrap();
+    // The mock prepends a NotificationResponse ('A') to this query's stream.
+    let rows = conn.simple_query("SELECT notify").unwrap();
+    assert_eq!(rows.len(), 2);
+    conn.close();
+}
+
+#[test]
+fn multi_statement_query_keeps_result_sets_separate() {
+    let server = MockServer::start(MockConfig::default()).unwrap();
+    let mut conn = Connection::connect(&config_for(&server)).unwrap();
+    // The mock emits two result groups (1 row, then 2 rows) before ReadyForQuery.
+    let sets = conn.simple_query_multi("SELECT multi").unwrap();
+    assert_eq!(sets.len(), 2);
+    assert_eq!(sets[0].len(), 1);
+    assert_eq!(sets[1].len(), 2);
+    assert_eq!(sets[0][0].get::<i32, _>(0).unwrap(), 1);
+    assert_eq!(sets[1][0].get::<i32, _>(0).unwrap(), 2);
+    assert_eq!(sets[1][1].get::<i32, _>(0).unwrap(), 3);
+    conn.close();
+}
+
+#[test]
+fn hostile_startup_bytes_do_not_panic_the_server() {
+    use std::io::Write;
+    use std::net::TcpStream;
+
+    let server = MockServer::start(MockConfig::default()).unwrap();
+
+    // A startup frame with length 0 would underflow `len - 4` and try to
+    // allocate ~usize::MAX bytes in the naive mock; it must be handled cleanly.
+    let mut raw = TcpStream::connect(server.addr).unwrap();
+    raw.write_all(&[0, 0, 0, 0]).unwrap();
+    let _ = raw.write_all(&[0xde, 0xad, 0xbe, 0xef]);
+    drop(raw);
+
+    // The accept loop and other connection threads are unaffected: a fresh
+    // normal connection still completes a query.
+    let mut conn = Connection::connect(&config_for(&server)).unwrap();
+    let rows = conn.simple_query("SELECT * FROM people").unwrap();
+    assert_eq!(rows.len(), 2);
     conn.close();
 }
 
