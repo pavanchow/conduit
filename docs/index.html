@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Conduit — a readable PostgreSQL wire-protocol driver</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <style>
   :root {
     --bg: #fbfbfd;
@@ -55,6 +56,13 @@
   h1 { font-size: 44px; letter-spacing: -0.02em; margin: 0 0 10px; }
   .tag { color: var(--accent); font-weight: 600; }
   header p { font-size: 20px; color: var(--muted); max-width: 640px; margin: 0 auto; }
+  header p.lead-note { font-size: 15px; margin-top: 14px; }
+  .howto { max-width: 640px; margin: 0 auto 22px; border: 1px solid var(--line); border-radius: 14px; padding: 2px 18px; background: var(--panel); }
+  .howto > summary { cursor: pointer; font-weight: 600; padding: 14px 0; list-style: none; }
+  .howto > summary::-webkit-details-marker { display: none; }
+  .howto > summary::before { content: "\25B8"; display: inline-block; margin-right: 8px; color: var(--accent); transition: transform .15s; }
+  .howto[open] > summary::before { transform: rotate(90deg); }
+  .howto p { margin: 0 0 14px; color: var(--muted); line-height: 1.6; }
   main { max-width: 960px; margin: 0 auto; padding: 12px 24px 96px; }
   .card {
     background: var(--panel);
@@ -121,11 +129,17 @@
 </head>
 <body>
 <header>
+  <img src="logo.svg" alt="Conduit logo" width="72" height="72">
   <h1>Conduit</h1>
   <p>A PostgreSQL driver you can read end to end. The <span class="tag">v3 wire protocol</span>, from the startup handshake to typed rows, with no ORM, no libpq, and hand-written crypto (MD5 and the SHA-256 family for SCRAM).</p>
+  <p class="lead-note">This is a live protocol visualizer: step through a real Postgres session and watch each frontend and backend message get built and decoded, byte for byte. Use the buttons below to advance through the exchange.</p>
 </header>
 
 <main>
+  <details class="howto">
+    <summary>How to use this playground</summary>
+    <p>Pick a session preset (a connect, an authenticated query, an error) with the segmented control, then press <strong>Step</strong> to walk the exchange one message at a time, or <strong>Reveal all</strong> to see the whole session. Each step shows the exact bytes on the wire and the decoded meaning, so you can trace a query from raw frames up to typed result rows.</p>
+  </details>
   <div class="card">
     <div class="controls">
       <div class="segmented" id="presets"></div>

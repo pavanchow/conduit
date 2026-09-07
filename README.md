@@ -1,5 +1,7 @@
 # Conduit
 
+<img src="docs/logo.svg" alt="Conduit logo" width="96">
+
 A from-scratch PostgreSQL driver you can read end to end. Conduit speaks the real
 v3 wire protocol over a plain TCP socket, from the startup handshake to typed
 result rows, with no ORM, no libpq, no C bindings, and zero external

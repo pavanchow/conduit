@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Conduit logo">
+  <defs>
+    <linearGradient id="cd-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2997ff"/>
+      <stop offset="1" stop-color="#0a4fb0"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#cd-bg)"/>
+  <!-- client node (left) -->
+  <rect x="20" y="52" width="24" height="24" rx="6" fill="#fff"/>
+  <!-- conduit pipe carrying protocol bytes -->
+  <rect x="40" y="59" width="34" height="10" rx="5" fill="#fff" opacity=".85"/>
+  <circle cx="49" cy="64" r="3" fill="#2997ff"/>
+  <circle cx="59" cy="64" r="3" fill="#2997ff"/>
+  <circle cx="69" cy="64" r="3" fill="#2997ff"/>
+  <!-- database cylinder (right) -->
+  <g fill="#fff">
+    <ellipse cx="92" cy="44" rx="18" ry="7"/>
+    <rect x="74" y="44" width="36" height="40"/>
+    <ellipse cx="92" cy="84" rx="18" ry="7"/>
+  </g>
+  <g fill="none" stroke="#2997ff" stroke-width="2.5" opacity=".5">
+    <ellipse cx="92" cy="58" rx="18" ry="7"/>
+    <ellipse cx="92" cy="71" rx="18" ry="7"/>
+  </g>
+</svg>
