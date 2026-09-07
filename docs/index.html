@@ -3,8 +3,25 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Conduit — a readable PostgreSQL wire-protocol driver</title>
+<title>Conduit: a readable PostgreSQL wire-protocol driver in Rust</title>
+<meta name="description" content="Conduit by Pavan Nallamothu: a from-scratch PostgreSQL driver you can read end to end. It speaks the real v3 wire protocol over plain TCP, from the startup handshake to typed result rows, with no ORM, no libpq, no C bindings, and hand-written crypto for SCRAM-SHA-256.">
+<meta name="author" content="Pavan Nallamothu (pavanchow)">
+<link rel="canonical" href="https://pavanchow.github.io/conduit/">
 <link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="author" href="https://github.com/pavanchow">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Conduit: a readable PostgreSQL wire-protocol driver in Rust">
+<meta property="og:description" content="A from-scratch Postgres driver you can read end to end: the v3 wire protocol, hand-written MD5 and the SHA-256 family for SCRAM, zero dependencies. Watch a query on the wire, byte for byte. By Pavan Nallamothu.">
+<meta property="og:url" content="https://pavanchow.github.io/conduit/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Conduit: a readable PostgreSQL wire-protocol driver in Rust">
+<meta name="twitter:description" content="Trace a Postgres query from the raw v3 frames on the wire up to typed result rows. A dependency-free driver with hand-written SCRAM crypto.">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Conduit","applicationCategory":"DeveloperApplication","operatingSystem":"Cross-platform","description":"Conduit is a from-scratch PostgreSQL driver in Rust that speaks the real v3 wire protocol over a plain TCP socket, from the startup handshake to typed result rows, with no ORM, no libpq, no C bindings, and zero external dependencies. Its cryptography is hand-written: MD5, SHA-256, HMAC-SHA-256, PBKDF2, and base64 for SCRAM-SHA-256 authentication.","url":"https://pavanchow.github.io/conduit/","author":{"@type":"Person","name":"Pavan Nallamothu"},"programmingLanguage":"Rust","codeRepository":"https://github.com/pavanchow/conduit","license":"https://opensource.org/licenses/MIT"}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Person","name":"Pavan Nallamothu","alternateName":"pavanchow","url":"https://github.com/pavanchow","sameAs":["https://github.com/pavanchow","https://hackerone.com/pavanchow"]}
+</script>
 <style>
   :root {
     --bg: #fbfbfd;
@@ -125,21 +142,83 @@
   footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 24px 60px; }
   a { color: var(--accent); text-decoration: none; }
   code { font-family: var(--mono); background: var(--code-bg); padding: 1px 5px; border-radius: 5px; font-size: 0.9em; }
+
+  /* cocoon-grade chrome layered over the styles above. */
+  html { scroll-behavior: smooth; }
+  .cwrap { max-width: 820px; margin: 0 auto; padding: 0 24px; }
+  nav.site { position: sticky; top: 0; z-index: 30; background: rgba(255,255,255,.82);
+    backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--line); }
+  @media (prefers-color-scheme: dark) { nav.site { background: rgba(0,0,0,.72); } }
+  nav.site .row { display: flex; justify-content: space-between; align-items: center; height: 56px;
+    max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  nav.site .brand { display: flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 650;
+    letter-spacing: -.01em; color: var(--ink); }
+  nav.site .brand .gem { width: 16px; height: 16px; border-radius: 50% 50% 50% 50%/60% 60% 40% 40%;
+    background: linear-gradient(135deg, #5ea0ff, #0071e3); }
+  nav.site .links { display: flex; gap: 24px; align-items: center; }
+  nav.site .links a { color: var(--ink); font-size: 14.5px; text-decoration: none; }
+  nav.site .links a:hover { color: var(--accent); }
+  @media (max-width: 640px) { nav.site .links a:not(.gh) { display: none; } }
+
+  .hero { padding: 74px 24px 20px; text-align: center; max-width: 960px; margin: 0 auto; }
+  .hero img { display: block; margin: 0 auto 8px; }
+  .hero .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--accent); margin: 0; }
+  .hero h1.big { font-size: clamp(38px, 6.6vw, 62px); line-height: 1.05; letter-spacing: -.035em;
+    font-weight: 700; margin: 16px auto 0; max-width: 13ch; text-wrap: balance; }
+  .hero p.sub { max-width: 680px; margin: 22px auto 0; font-size: clamp(16px, 2vw, 20px);
+    color: var(--muted); line-height: 1.6; }
+  .cta-row { display: flex; gap: 13px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
+  .hbtn { display: inline-block; padding: 12px 25px; border-radius: 999px; font-size: 15px;
+    font-weight: 600; border: 1px solid var(--ink); color: var(--ink); text-decoration: none; }
+  .hbtn:hover { opacity: .75; text-decoration: none; }
+  .hbtn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+  .stage { max-width: 960px; margin: 8px auto 0; padding: 0; }
+
+  section.narr { padding: 74px 0; border-top: 1px solid var(--line); }
+  section.narr h2 { font-size: clamp(25px, 4vw, 36px); line-height: 1.12; letter-spacing: -.025em;
+    font-weight: 660; text-align: center; max-width: 760px; margin: 0 auto; }
+  section.narr p.lead { max-width: 660px; margin: 18px auto 0; text-align: center; color: var(--muted);
+    font-size: 16px; line-height: 1.6; }
+  section.narr pre { background: #15161c; color: #ececf4; border-radius: 14px; padding: 20px 22px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.62; overflow-x: auto; max-width: 760px;
+    margin: 28px auto 0; white-space: pre; }
+  section.narr pre .cm { color: #8a8d9a; } section.narr pre .g { color: #7fd6a0; }
+  footer.site { text-align: center; color: var(--muted); font-size: 14px; padding: 54px 24px 64px;
+    border-top: 1px solid var(--line); }
+  footer.site .name { color: var(--ink); font-weight: 600; }
+  footer.site p + p { margin-top: 10px; }
+  @media (max-width: 640px) { .hero { padding: 52px 20px 18px; } section.narr { padding: 54px 0; } }
 </style>
 </head>
 <body>
-<header>
+<noscript><div style="max-width:820px;margin:0 auto;padding:40px 24px;color:#6e6e73">Conduit is a from-scratch PostgreSQL driver you can read end to end, by Pavan Nallamothu. It speaks the real v3 wire protocol over a plain TCP socket, from the startup handshake to typed result rows, with no ORM, no libpq, and hand-written crypto for SCRAM-SHA-256. Source: <a href="https://github.com/pavanchow/conduit">github.com/pavanchow/conduit</a>.</div></noscript>
+
+<nav class="site"><div class="row">
+  <div class="brand"><span class="gem"></span>Conduit</div>
+  <div class="links"><a href="#sim">Visualizer</a><a href="#how">How it works</a><a href="#use">Use it</a><a class="gh" href="https://github.com/pavanchow/conduit">GitHub</a></div>
+</div></nav>
+
+<div class="hero">
   <img src="logo.svg" alt="Conduit logo" width="72" height="72">
-  <h1>Conduit</h1>
-  <p>A PostgreSQL driver you can read end to end. The <span class="tag">v3 wire protocol</span>, from the startup handshake to typed rows, with no ORM, no libpq, and hand-written crypto (MD5 and the SHA-256 family for SCRAM).</p>
-  <p class="lead-note">This is a live protocol visualizer: step through a real Postgres session and watch each frontend and backend message get built and decoded, byte for byte. Use the buttons below to advance through the exchange.</p>
-</header>
+  <p class="eyebrow">Rust · Postgres v3 wire protocol</p>
+  <h1 class="big">See a query<br>on the wire.</h1>
+  <p class="sub">Conduit is a from-scratch PostgreSQL driver you can read end to end. It speaks the real v3 wire protocol over a plain TCP socket, from the startup handshake to typed result rows, with no ORM, no libpq, no C bindings, and zero external dependencies. Even the crypto is hand-written: MD5, SHA-256, HMAC, PBKDF2, and base64 all live in the tree so SCRAM-SHA-256 needs nothing from outside. This page ports that codec to JavaScript, so every byte you see is the byte the Rust driver puts on the wire.</p>
+  <div class="cta-row">
+    <a class="hbtn primary" href="#sim">Open the visualizer</a>
+    <a class="hbtn" href="https://github.com/pavanchow/conduit">View on GitHub</a>
+  </div>
+</div>
 
 <main>
   <details class="howto">
     <summary>How to use this playground</summary>
     <p>Pick a session preset (a connect, an authenticated query, an error) with the segmented control, then press <strong>Step</strong> to walk the exchange one message at a time, or <strong>Reveal all</strong> to see the whole session. Each step shows the exact bytes on the wire and the decoded meaning, so you can trace a query from raw frames up to typed result rows.</p>
   </details>
+
+  <div class="stage" id="sim">
   <div class="card">
     <div class="controls">
       <div class="segmented" id="presets"></div>
@@ -158,11 +237,39 @@
     <div class="hexlabel">Decoded result set</div>
     <div id="result"></div>
   </div>
+  </div>
 </main>
 
-<footer>
-  This page ports the Conduit codec to JavaScript, so every byte here matches the Rust driver.
-  <br><a href="https://github.com/pavanchow/conduit">github.com/pavanchow/conduit</a> · by Pavan Nallamothu
+<section class="narr" id="how"><div class="cwrap">
+  <h2>Every byte, cross-checked</h2>
+  <p class="lead">The hard part of a wire-protocol driver is proving it without standing up a server. Conduit does it two ways, both run by <code>cargo test</code>: golden byte vectors assert each message against the exact bytes it must produce, and an in-process mock server on a real TcpListener runs the actual driver over TCP through a full session.</p>
+  <pre><span class="cm"># cargo test, no database needed</span>
+golden byte vectors   every FE/BE message asserted byte for byte; <span class="g">decode(encode(x)) == x</span>
+mock server over TCP   handshake, MD5 + SCRAM-SHA-256 (right pw ok, wrong pw fails,
+                       bad server signature fails), typed rows including a NULL,
+                       parameterized query round-trip, multi-statement result sets,
+                       ErrorResponse <span class="g">-&gt; Error::Db { code: 42601, .. }</span></pre>
+  <p class="lead" style="margin-top:26px">In the extended protocol a parameter travels in the Bind message as text, so a value like <code>robert'); DROP TABLE students;--</code> is always data and never SQL. And a server-declared frame above the 64 MiB cap is rejected before a single body byte is buffered, so a hostile server cannot drive the client to OOM. The mock encodes backend messages by hand while the driver decodes them, and the reverse for frontend messages, so the two halves cross-check each other.</p>
+</div></section>
+
+<section class="narr" id="use"><div class="cwrap">
+  <h2>Use it</h2>
+  <pre><span class="cm"># golden vectors plus the mock integration, no database</span>
+cargo test
+
+<span class="cm"># a scripted session, no database needed</span>
+cargo run -- demo
+
+<span class="cm"># run a query against a real server</span>
+cargo run -- query postgres://u:p@host/db "SELECT 1 AS one"
+
+<span class="cm"># opt-in real-Postgres smoke test (CI stays green without it)</span>
+CONDUIT_PG_URL=postgres://user:pass@localhost:5432/db cargo test</pre>
+</div></section>
+
+<footer class="site">
+  <p>Conduit is MIT licensed. Source, tests, and the design notes are on <a href="https://github.com/pavanchow/conduit">GitHub</a>.</p>
+  <p>By <span class="name">Pavan Nallamothu</span>.</p>
 </footer>
 
 <script>
