@@ -3,25 +3,32 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Conduit: a readable PostgreSQL wire-protocol driver in Rust</title>
-<meta name="description" content="Conduit by Pavan Nallamothu: a from-scratch PostgreSQL driver you can read end to end. It speaks the real v3 wire protocol over plain TCP, from the startup handshake to typed result rows, with no ORM, no libpq, no C bindings, and hand-written crypto for SCRAM-SHA-256.">
-<meta name="author" content="Pavan Nallamothu (pavanchow)">
-<meta name="keywords" content="PostgreSQL driver, Postgres wire protocol, v3 protocol, SCRAM-SHA-256, MD5 authentication, SHA-256, HMAC, PBKDF2, base64, database driver, Rust, zero dependencies, no libpq, extended query protocol, prepared statement, type OID decoding, Pavan Nallamothu, pavanchow">
+<title>Conduit: a PostgreSQL wire-protocol driver in Rust | Pavan Nallamothu</title>
+<meta name="description" content="Conduit is a from-scratch PostgreSQL driver in Rust that speaks the v3 wire protocol over plain TCP, with hand-written SCRAM-SHA-256 crypto and zero dependencies, by Pavan Nallamothu.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+<meta name="author" content="Pavan Nallamothu">
+<meta name="keywords" content="PostgreSQL driver in Rust, Postgres wire protocol, v3 protocol, SCRAM-SHA-256, MD5 authentication, database driver from scratch, zero dependencies, no libpq, extended query protocol, prepared statement, type OID decoding, Postgres client library, Rust database driver, conduit, Pavan Nallamothu, pavanchow">
 <link rel="canonical" href="https://pavanchow.github.io/conduit/">
 <link rel="icon" type="image/svg+xml" href="logo.svg">
 <link rel="author" href="https://github.com/pavanchow">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Conduit: a readable PostgreSQL wire-protocol driver in Rust">
-<meta property="og:description" content="A from-scratch Postgres driver you can read end to end: the v3 wire protocol, hand-written MD5 and the SHA-256 family for SCRAM, zero dependencies. Watch a query on the wire, byte for byte. By Pavan Nallamothu.">
+<meta property="og:site_name" content="Pavan Nallamothu">
+<meta property="og:locale" content="en_US">
+<meta property="og:title" content="Conduit: a PostgreSQL wire-protocol driver in Rust | Pavan Nallamothu">
+<meta property="og:description" content="A from-scratch Postgres driver you can read end to end: the v3 wire protocol, hand-written SCRAM-SHA-256 crypto, zero dependencies. Watch a query on the wire, byte for byte.">
 <meta property="og:url" content="https://pavanchow.github.io/conduit/">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Conduit: a readable PostgreSQL wire-protocol driver in Rust">
+<meta property="og:image" content="https://pavanchow.github.io/conduit/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Conduit by Pavan Nallamothu">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Conduit: a PostgreSQL wire-protocol driver in Rust | Pavan Nallamothu">
 <meta name="twitter:description" content="Trace a Postgres query from the raw v3 frames on the wire up to typed result rows. A dependency-free driver with hand-written SCRAM crypto.">
+<meta name="twitter:image" content="https://pavanchow.github.io/conduit/og-image.png">
+<meta name="twitter:creator" content="@pavanchow">
+<meta name="twitter:site" content="@pavanchow">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Conduit","applicationCategory":"DeveloperApplication","operatingSystem":"Cross-platform","description":"Conduit is a from-scratch PostgreSQL driver in Rust that speaks the real v3 wire protocol over a plain TCP socket, from the startup handshake to typed result rows, with no ORM, no libpq, no C bindings, and zero external dependencies. Its cryptography is hand-written: MD5, SHA-256, HMAC-SHA-256, PBKDF2, and base64 for SCRAM-SHA-256 authentication.","url":"https://pavanchow.github.io/conduit/","author":{"@type":"Person","name":"Pavan Nallamothu"},"programmingLanguage":"Rust","softwareVersion":"0.1.0","codeRepository":"https://github.com/pavanchow/conduit","license":"https://opensource.org/licenses/MIT"}
-</script>
-<script type="application/ld+json">
-{"@context":"https://schema.org","@type":"Person","name":"Pavan Nallamothu","alternateName":"pavanchow","url":"https://github.com/pavanchow","sameAs":["https://github.com/pavanchow","https://hackerone.com/pavanchow"]}
+{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","name":"Conduit","alternateName":"Conduit Postgres driver","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS, Windows","description":"Conduit is a from-scratch PostgreSQL driver in Rust that speaks the real v3 wire protocol over a plain TCP socket, from the startup handshake to typed result rows, with no ORM, no libpq, no C bindings, and zero external dependencies. Its cryptography is hand-written: MD5, SHA-256, HMAC-SHA-256, PBKDF2, and base64 for SCRAM-SHA-256 authentication.","url":"https://pavanchow.github.io/conduit/","image":"https://pavanchow.github.io/conduit/og-image.png","softwareVersion":"0.1.0","programmingLanguage":"Rust","codeRepository":"https://github.com/pavanchow/conduit","license":"https://opensource.org/licenses/MIT","datePublished":"2026-08-21","author":{"@id":"https://github.com/pavanchow#pavan"},"publisher":{"@id":"https://github.com/pavanchow#pavan"},"keywords":"PostgreSQL driver, Postgres wire protocol, v3 protocol, SCRAM-SHA-256, database driver, zero dependencies, extended query protocol, type OID decoding","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"featureList":["Speaks the real PostgreSQL v3 wire protocol over plain TCP","Startup handshake through typed result rows","Hand-written SCRAM-SHA-256 authentication","MD5, SHA-256, HMAC-SHA-256, PBKDF2, and base64 from scratch","Extended query protocol and prepared statements","Type OID decoding to typed values","Zero external dependencies, no libpq, no C bindings"]},{"@type":"Person","@id":"https://github.com/pavanchow#pavan","name":"Pavan Nallamothu","alternateName":"pavanchow","url":"https://github.com/pavanchow","jobTitle":"Software Engineer and Security Researcher","knowsAbout":["Rust","systems programming","compilers","operating systems","networking","databases","security research"],"sameAs":["https://github.com/pavanchow","https://hackerone.com/pavanchow"]},{"@type":"WebSite","name":"Conduit by Pavan Nallamothu","url":"https://pavanchow.github.io/conduit/","author":{"@id":"https://github.com/pavanchow#pavan"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Pavan Nallamothu","item":"https://github.com/pavanchow"},{"@type":"ListItem","position":2,"name":"Conduit","item":"https://pavanchow.github.io/conduit/"}]},{"@type":"WebPage","url":"https://pavanchow.github.io/conduit/","name":"Conduit: a PostgreSQL wire-protocol driver in Rust | Pavan Nallamothu","isPartOf":{"@type":"WebSite","url":"https://pavanchow.github.io/conduit/"},"about":{"@type":"SoftwareApplication","name":"Conduit"},"author":{"@id":"https://github.com/pavanchow#pavan"},"inLanguage":"en"}]}
 </script>
 <style>
   :root {
@@ -327,6 +334,17 @@ CONDUIT_PG_URL=postgres://user:pass@localhost:5432/db cargo test</pre>
 <footer class="site">
   <p>Conduit is MIT licensed. Source, tests, and the design notes are on <a href="https://github.com/pavanchow/conduit">GitHub</a>.</p>
   <p>By <span class="name">Pavan Nallamothu</span>.</p>
+  <div style="max-width:760px;margin:32px auto 0;padding-top:26px;border-top:1px solid var(--line);text-align:left">
+    <p style="font-weight:600;color:var(--ink);margin-bottom:10px">More open-source tools by Pavan Nallamothu</p>
+    <p style="line-height:2">
+      <a href="https://pavanchow.github.io/conch/">Conch, a Unix shell in Rust built from scratch</a><br>
+      <a href="https://pavanchow.github.io/datagram/">Datagram, a TCP reliable-transport engine in Rust</a><br>
+      <a href="https://pavanchow.github.io/echofront/">Echofront, a resilient L7 reverse proxy and load balancer in Rust</a><br>
+      <a href="https://pavanchow.github.io/unweave/">Unweave, an EVM bytecode disassembler in Rust</a><br>
+      <a href="https://pavanchow.github.io/emberchip/">Emberchip, a deterministic RTOS simulator in Rust</a><br>
+      <a href="https://github.com/pavanchow">All of Pavan Nallamothu's open-source projects on GitHub</a>
+    </p>
+  </div>
 </footer>
 
 <script>
