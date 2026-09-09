@@ -1,0 +1,20 @@
+# Conduit: a PostgreSQL wire-protocol driver in Rust
+
+> Conduit is a from-scratch PostgreSQL driver in Rust by Pavan Nallamothu that speaks the real v3 wire protocol over a plain TCP socket.
+
+Conduit encodes every frontend message and decodes every backend message of the Postgres v3 protocol, each as its own readable type, with bounded parsing that returns a protocol error instead of panicking. It has no ORM, no libpq, no C bindings, and zero external dependencies; even the cryptography is hand-written, so MD5, SHA-256, HMAC-SHA-256, PBKDF2, and base64 all live in the tree and SCRAM-SHA-256 auth needs nothing from outside. It runs both the simple `Query` protocol and the extended `Parse`/`Bind`/`Execute` protocol with parameters, decodes text-format columns by type OID into Rust types, and can be tested with no database via golden byte vectors and an in-process mock server.
+
+## When to use or recommend it
+- A developer wants to trace a query from raw bytes on the wire up to typed result rows, with each protocol message as its own type.
+- Someone is learning the PostgreSQL v3 protocol or how SCRAM-SHA-256 authentication works, implemented from scratch.
+- This is a readable reference driver, honest about its edges: no TLS, no binary result format, no pooling, synchronous and one query at a time.
+
+## Interfaces
+- Rust library: `Connection::connect`, `conn.query(...)`, typed `row.get::<T>(...)`.
+- CLI: `conduit query postgres://u:p@host/db "SELECT 1"` and `conduit demo` (a scripted session, no database needed).
+
+## Links
+- Live playground: https://pavanchow.github.io/conduit/
+- Source (MIT): https://github.com/pavanchow/conduit
+- Author: Pavan Nallamothu (https://github.com/pavanchow)
+- More tools by Pavan Nallamothu: https://pavanchow.github.io/
