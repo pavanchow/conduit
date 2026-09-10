@@ -6,6 +6,8 @@ Conduit is a from-scratch PostgreSQL driver in Rust that you can read end to end
 
 **[Live demo](https://pavanchow.github.io/conduit/)** · MIT licensed · pure Rust
 
+Built from scratch by [Pavan Nallamothu](https://pavanchow.github.io/) ([LinkedIn](https://www.linkedin.com/in/pavanchow/), [GitHub](https://github.com/pavanchow)).
+
 Most people reach a database through a driver they never open. Conduit is the
 opposite: the whole path is here in a few hundred lines of Rust, each protocol
 message its own readable type, so you can trace a query from the bytes on the
